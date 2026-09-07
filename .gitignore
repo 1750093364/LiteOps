@@ -1,0 +1,8 @@
+venv/
+data/
+__pycache__/
+*.pyc
+.env
+dist/
+.venv/
+scripts/tmp_card07/

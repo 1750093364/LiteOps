@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>轻析 LiteOps</title>
+  <link rel="stylesheet" href="/css/app.css?v=20260907b">
+</head>
+<body>
+  <div id="app" v-cloak>
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-name">轻析 LiteOps</div>
+        <div class="brand-slogan">不做看板，做 BI 之外的事</div>
+      </div>
+      <nav class="menu">
+        <a v-for="item in menus" :key="item.key" href="javascript:void(0)"
+           class="menu-item" :class="{ active: currentView === item.key }"
+           @click="goto(item.key)">{{ item.label }}</a>
+      </nav>
+      <div class="sidebar-footer">v1.0 · 本地优先</div>
+    </aside>
+
+    <main class="content">
+      <div v-if="demoMode" class="demo-banner">
+        演示环境 · 数据为虚构样例，可随意操作
+      </div>
+      <section v-if="currentView === 'files'" class="view-card">
+        <files-view></files-view>
+      </section>
+      <section v-else-if="currentView === 'cleaning'" class="view-card">
+        <cleaning-view></cleaning-view>
+      </section>
+      <section v-else-if="currentView === 'snippets'" class="view-card">
+        <snippets-view></snippets-view>
+      </section>
+      <section v-else-if="currentView === 'docs'" class="view-card">
+        <docs-view></docs-view>
+      </section>
+      <section v-else-if="currentView === 'tickets'" class="view-card">
+        <tickets-view></tickets-view>
+      </section>
+      <section v-else-if="currentView === 'reports'" class="view-card">
+        <reports-view></reports-view>
+      </section>
+      <section v-else-if="currentView === 'settings'" class="view-card">
+        <settings-view></settings-view>
+      </section>
+    </main>
+  </div>
+
+  <script src="/vendor/vue.global.prod.js?v=20260907b"></script>
+  <script src="/js/views/files.js?v=20260907b"></script>
+  <script src="/js/views/cleaning.js?v=20260907b"></script>
+  <script src="/js/views/snippets.js?v=20260907b"></script>
+  <script src="/js/views/docs.js?v=20260907b"></script>
+  <script src="/js/views/tickets.js?v=20260907b"></script>
+  <script src="/js/views/settings.js?v=20260907b"></script>
+  <script src="/js/views/reports.js?v=20260907b"></script>
+  <script src="/js/app.js?v=20260907b"></script>
+</body>
+</html>

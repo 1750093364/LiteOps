@@ -1,0 +1,82 @@
+[
+  {
+    "title": "次日留存率",
+    "category": "留存",
+    "dialect": "mysql",
+    "source": "builtin",
+    "note": "最常用的留存指标：某日活跃用户在第二天仍活跃的比例。把行为日志自连接一次即可，改表名和日期字段就能跑。",
+    "sql_body": "-- 次日留存率：某日活跃用户中，第二天仍有活跃行为的用户占比\n-- @param: 表名 user_action_log（用户行为日志，一行一次活跃）\n-- @param: 日期字段 dt（格式 YYYY-MM-DD）；用户字段 user_id\nSELECT\n    a.dt                                                       AS 日期,\n    COUNT(DISTINCT a.user_id)                                  AS 当日活跃用户,\n    COUNT(DISTINCT b.user_id)                                  AS 次日留存用户,\n    ROUND(COUNT(DISTINCT b.user_id)\n          / COUNT(DISTINCT a.user_id) * 100, 2)                AS 次日留存率_pct\nFROM user_action_log a\nLEFT JOIN user_action_log b\n       ON a.user_id = b.user_id\n      AND b.dt = DATE_ADD(a.dt, INTERVAL 1 DAY)   -- 次日 = 基准日 +1 天\nGROUP BY a.dt\nORDER BY a.dt;"
+  },
+  {
+    "title": "7日留存矩阵",
+    "category": "留存",
+    "dialect": "mysql",
+    "source": "builtin",
+    "note": "留存矩阵：每行一个注册日期，每列是第 N 日的留存人数，一眼看出新用户质量衰减曲线。注册日志 LEFT JOIN 活跃日志，用 CASE WHEN 按天展开。",
+    "sql_body": "-- 7 日留存矩阵：注册日期为行、注册后第 N 日为列，交叉统计留存人数\n-- @param: 表名 user_register（注册日志）、user_action_log（活跃日志）\n-- @param: 注册日期 reg_dt；活跃日期 dt；用户字段 user_id\nSELECT\n    r.reg_dt                                                 AS 注册日期,\n    COUNT(DISTINCT r.user_id)                                AS 新增用户,\n    COUNT(DISTINCT CASE WHEN a.dt = DATE_ADD(r.reg_dt, INTERVAL 1 DAY) THEN r.user_id END) AS d1,\n    COUNT(DISTINCT CASE WHEN a.dt = DATE_ADD(r.reg_dt, INTERVAL 2 DAY) THEN r.user_id END) AS d2,\n    COUNT(DISTINCT CASE WHEN a.dt = DATE_ADD(r.reg_dt, INTERVAL 3 DAY) THEN r.user_id END) AS d3,\n    COUNT(DISTINCT CASE WHEN a.dt = DATE_ADD(r.reg_dt, INTERVAL 4 DAY) THEN r.user_id END) AS d4,\n    COUNT(DISTINCT CASE WHEN a.dt = DATE_ADD(r.reg_dt, INTERVAL 5 DAY) THEN r.user_id END) AS d5,\n    COUNT(DISTINCT CASE WHEN a.dt = DATE_ADD(r.reg_dt, INTERVAL 6 DAY) THEN r.user_id END) AS d6,\n    COUNT(DISTINCT CASE WHEN a.dt = DATE_ADD(r.reg_dt, INTERVAL 7 DAY) THEN r.user_id END) AS d7,\n    ROUND(COUNT(DISTINCT CASE WHEN a.dt = DATE_ADD(r.reg_dt, INTERVAL 7 DAY) THEN r.user_id END)\n          / COUNT(DISTINCT r.user_id) * 100, 2)              AS 7日留存率_pct\nFROM user_register r\nLEFT JOIN user_action_log a\n       ON a.user_id = r.user_id\n      AND a.dt > r.reg_dt                                   -- 只统计注册之后的活跃\n      AND a.dt <= DATE_ADD(r.reg_dt, INTERVAL 7 DAY)\nGROUP BY r.reg_dt\nORDER BY r.reg_dt;"
+  },
+  {
+    "title": "漏斗转化率",
+    "category": "漏斗",
+    "dialect": "mysql",
+    "source": "builtin",
+    "note": "多步骤转化漏斗：先按用户把各步骤打成 0/1 标记（CTE 汇总），再聚合算每步人数与「本步/上一步」转化率。步骤事件名按业务改。",
+    "sql_body": "-- 漏斗转化率：浏览 → 加购 → 下单 → 支付，逐步相除得转化率\n-- @param: 表名 user_action_log；行为事件字段 event；用户字段 user_id\n-- @param: 统计日期范围 dt（BETWEEN 起 AND 止）\nWITH step_user AS (\n    SELECT\n        user_id,\n        MAX(CASE WHEN event = 'view_product' THEN 1 ELSE 0 END) AS s1_浏览商品,\n        MAX(CASE WHEN event = 'add_cart'     THEN 1 ELSE 0 END) AS s2_加入购物车,\n        MAX(CASE WHEN event = 'submit_order' THEN 1 ELSE 0 END) AS s3_提交订单,\n        MAX(CASE WHEN event = 'pay_success'  THEN 1 ELSE 0 END) AS s4_支付成功\n    FROM user_action_log\n    WHERE dt BETWEEN '2026-08-01' AND '2026-08-31'   -- @param: 统计日期范围\n    GROUP BY user_id\n)\nSELECT\n    COUNT(*)                                                          AS 触达用户,\n    SUM(s1_浏览商品)                                                   AS 步骤1_浏览,\n    SUM(s2_加入购物车)                                                 AS 步骤2_加购,\n    SUM(s3_提交订单)                                                   AS 步骤3_下单,\n    SUM(s4_支付成功)                                                   AS 步骤4_支付,\n    ROUND(SUM(s2_加入购物车) / NULLIF(SUM(s1_浏览商品), 0) * 100, 2)   AS 浏览_加购转化率_pct,\n    ROUND(SUM(s3_提交订单) / NULLIF(SUM(s2_加入购物车), 0) * 100, 2)   AS 加购_下单转化率_pct,\n    ROUND(SUM(s4_支付成功) / NULLIF(SUM(s3_提交订单), 0) * 100, 2)    AS 下单_支付转化率_pct,\n    ROUND(SUM(s4_支付成功) / NULLIF(SUM(s1_浏览商品), 0) * 100, 2)    AS 整体转化率_pct\nFROM step_user;\n-- 说明：本写法按「窗口内是否发生过」统计；若要求步骤严格按时间先后发生，\n-- 需在 CTE 中取每步最早时间并加 WHERE 逐步比较时间大小。"
+  },
+  {
+    "title": "分组 TopN",
+    "category": "TopN",
+    "dialect": "mysql",
+    "source": "builtin",
+    "note": "每组取前 N 名（如各渠道 Top3 订单）：ROW_NUMBER() OVER (PARTITION BY 分组字段 ORDER BY 指标 DESC) 排名后外层过滤。同名次要排名可换 RANK/DENSE_RANK。",
+    "sql_body": "-- 分组 TopN：每个渠道下金额最高的 N 笔订单（窗口函数 ROW_NUMBER）\n-- @param: 表名 sales_orders；分组字段 channel；排序指标 amount\n-- @param: N = 3（每组取前 3 名，改 WHERE rn <= N）\nSELECT *\nFROM (\n    SELECT\n        order_id,\n        channel,\n        user_id,\n        amount,\n        order_date,\n        ROW_NUMBER() OVER (PARTITION BY channel ORDER BY amount DESC) AS rn  -- 组内按金额降序排名\n    FROM sales_orders\n    WHERE order_date BETWEEN '2026-08-01' AND '2026-08-31'  -- @param: 统计日期范围\n) t\nWHERE rn <= 3                  -- @param: TopN 的 N 值\nORDER BY channel, rn;\n-- 并列排名需求：ROW_NUMBER 换成 RANK（并列同名次、跳号）\n-- 或 DENSE_RANK（并列同名次、不跳号）。"
+  },
+  {
+    "title": "连续 N 天行为",
+    "category": "其他",
+    "dialect": "mysql",
+    "source": "builtin",
+    "note": "找出连续 N 天都有某行为（如登录）的用户。技巧：按用户对日期编号，用「日期 - 行号」得到连续组标识，同组内日期必然连续，按组 HAVING 计数即可。",
+    "sql_body": "-- 连续 N 天行为：找出连续 N 天（示例 N=3）都登录过的用户及其连续区间\n-- 思路：日期减去「组内行号」得到连续组标识，同一标识内日期连续\n-- @param: 表名 user_action_log；日期字段 dt；用户字段 user_id；事件 event\n-- @param: N = 3（要求连续的天数，改 HAVING COUNT(*) >= N）\nWITH daily AS (\n    -- 每个用户每天一行（同一天多次行为只算一次）\n    SELECT DISTINCT user_id, dt\n    FROM user_action_log\n    WHERE event = 'login'                -- @param: 行为事件名\n),\ngrp AS (\n    SELECT\n        user_id,\n        dt,\n        DATE_SUB(dt, INTERVAL ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY dt) DAY) AS grp_flag\n    FROM daily\n)\nSELECT\n    user_id            AS 用户,\n    MIN(dt)            AS 连续开始日期,\n    MAX(dt)            AS 连续结束日期,\n    COUNT(*)           AS 连续天数\nFROM grp\nGROUP BY user_id, grp_flag\nHAVING COUNT(*) >= 3                    -- @param: N 值\nORDER BY 连续天数 DESC, user_id;"
+  },
+  {
+    "title": "同比环比",
+    "category": "同环比",
+    "dialect": "mysql",
+    "source": "builtin",
+    "note": "月度销售额的环比（比上月）与同比（比去年同月）：先按月聚合，再用 LAG 窗口函数向前取 1 行 / 12 行，相减除以上期值得增长率。",
+    "sql_body": "-- 同比 / 环比：月销售额对比上月（环比 LAG 1）与去年同月（同比 LAG 12）\n-- @param: 表名 sales_orders；日期字段 order_date；金额字段 amount\nWITH monthly AS (\n    SELECT\n        DATE_FORMAT(order_date, '%Y-%m') AS 月份,\n        SUM(amount)                      AS 月销售额\n    FROM sales_orders\n    GROUP BY DATE_FORMAT(order_date, '%Y-%m')\n)\nSELECT\n    月份,\n    月销售额,\n    LAG(月销售额, 1)  OVER (ORDER BY 月份)  AS 上月销售额,\n    LAG(月销售额, 12) OVER (ORDER BY 月份)  AS 去年同月销售额,\n    ROUND((月销售额 - LAG(月销售额, 1)  OVER (ORDER BY 月份))\n          / NULLIF(LAG(月销售额, 1)  OVER (ORDER BY 月份)), 0) * 100, 2)  AS 环比增长率_pct,\n    ROUND((月销售额 - LAG(月销售额, 12) OVER (ORDER BY 月份))\n          / NULLIF(LAG(月销售额, 12) OVER (ORDER BY 月份)), 0) * 100, 2)  AS 同比增长率_pct\nFROM monthly\nORDER BY 月份;\n-- 周/季度粒度：把 DATE_FORMAT 格式换成 %x-%v（周）或 %Y-Q 拼接季度即可。"
+  },
+  {
+    "title": "去重 UV 统计",
+    "category": "去重",
+    "dialect": "mysql",
+    "source": "builtin",
+    "note": "PV 用 COUNT(*)，UV 必须 COUNT(DISTINCT user_id) 去重，同一用户当天多次访问只算一个独立用户。按天、按渠道分组直接出报表。",
+    "sql_body": "-- 去重 UV：按天 × 渠道统计 PV（访问次数）与 UV（独立用户数）\n-- @param: 表名 user_action_log（或页面访问日志 page_view）\n-- @param: 日期字段 dt；用户字段 user_id；渠道字段 channel\nSELECT\n    dt                                           AS 日期,\n    channel                                      AS 渠道,\n    COUNT(*)                                     AS PV_访问次数,\n    COUNT(DISTINCT user_id)                      AS UV_独立用户,\n    ROUND(COUNT(*) / COUNT(DISTINCT user_id), 2) AS 人均访问次数\nFROM user_action_log\nWHERE dt BETWEEN '2026-08-01' AND '2026-08-31'   -- @param: 统计日期范围\nGROUP BY dt, channel\nORDER BY dt, channel;\n-- 超大数据量精确去重太慢时：Hive/Spark 用 approx_count_distinct，\n-- PostgreSQL 可用 distinct 统计 + 物化视图，或 HyperLogLog 近似方案。"
+  },
+  {
+    "title": "累计值（累计求和）",
+    "category": "汇总",
+    "dialect": "mysql",
+    "source": "builtin",
+    "note": "累计 GMV / 累计销量：按天聚合后用 SUM() OVER (ORDER BY 日期) 做窗口累计求和，不用自连接。注意累计 UV 不能逐日相加，需回明细表统计。",
+    "sql_body": "-- 累计值：按日期排序的累计销售额与累计购买人次（SUM OVER ORDER BY）\n-- @param: 表名 sales_orders；日期字段 order_date；金额 amount；用户 user_id\nWITH daily AS (\n    SELECT\n        DATE(order_date)          AS 日期,\n        SUM(amount)               AS 当日销售额,\n        COUNT(DISTINCT user_id)   AS 当日购买用户\n    FROM sales_orders\n    GROUP BY DATE(order_date)\n)\nSELECT\n    日期,\n    当日销售额,\n    当日购买用户,\n    SUM(当日销售额)   OVER (ORDER BY 日期) AS 累计销售额,\n    SUM(当日购买用户) OVER (ORDER BY 日期) AS 累计购买人次\nFROM daily\nORDER BY 日期;\n-- 注意：累计「独立用户数」不能把每日 UV 相加（同一用户多天购买会重复），\n-- 需回明细表：COUNT(DISTINCT CASE WHEN order_date <= d.日期 THEN user_id END)。"
+  },
+  {
+    "title": "中位数",
+    "category": "汇总",
+    "dialect": "mysql",
+    "source": "builtin",
+    "note": "MySQL 8.0 没有内置 PERCENTILE_CONT 函数（PG/Oracle 才有），用 ROW_NUMBER 排名后取中间位置：奇数取 1 个、偶数取中间 2 个求平均。附 PG 等价写法注释。",
+    "sql_body": "-- 中位数：MySQL 8.0 无 PERCENTILE_CONT，用窗口函数排名取中间值\n-- 奇数行取中间 1 个、偶数行取中间 2 个求平均（AVG 自动兼容两种情况）\n-- @param: 表名 sales_orders；求中位数字段 amount；分组字段 channel\nWITH ranked AS (\n    SELECT\n        channel,\n        amount,\n        ROW_NUMBER() OVER (PARTITION BY channel ORDER BY amount) AS rn,\n        COUNT(*)    OVER (PARTITION BY channel)                 AS cnt\n    FROM sales_orders\n    WHERE amount IS NOT NULL          -- 中位数忽略 NULL\n)\nSELECT\n    channel        AS 渠道,\n    AVG(amount)    AS 订单金额中位数\nFROM ranked\nWHERE rn IN (FLOOR((cnt + 1) / 2), CEIL((cnt + 1) / 2))   -- 中间位置（奇数两值相同）\nGROUP BY channel\nORDER BY channel;\n-- PostgreSQL / Oracle 等价写法（内置百分位函数）：\n-- SELECT channel,\n--        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY amount) AS 订单金额中位数\n-- FROM sales_orders GROUP BY channel;"
+  },
+  {
+    "title": "复购率",
+    "category": "留存",
+    "dialect": "mysql",
+    "source": "builtin",
+    "note": "复购率 = 下单 ≥2 次的用户 / 全部购买用户。先按用户聚合下单次数，再用 CASE WHEN 统计复购人数相除。限定时间窗的写法见 SQL 末尾注释。",
+    "sql_body": "-- 复购率：产生过 2 次及以上购买的用户 / 全部购买用户\n-- @param: 表名 sales_orders；用户字段 user_id；订单字段 order_id；日期 order_date\nWITH user_orders AS (\n    SELECT\n        user_id,\n        MIN(DATE(order_date))        AS 首购日期,\n        COUNT(DISTINCT order_id)     AS 下单次数\n    FROM sales_orders\n    GROUP BY user_id\n)\nSELECT\n    COUNT(*)                                                       AS 购买用户数,\n    SUM(CASE WHEN 下单次数 >= 2 THEN 1 ELSE 0 END)                 AS 复购用户数,\n    ROUND(SUM(CASE WHEN 下单次数 >= 2 THEN 1 ELSE 0 END)\n          / COUNT(*) * 100, 2)                                    AS 复购率_pct\nFROM user_orders;\n-- 若要算「某月首购用户 30 天内复购率」：在 user_orders 中过滤首购日期范围，\n-- 再 JOIN 回订单表，判断第二次购买日期 <= DATE_ADD(首购日期, INTERVAL 30 DAY)。"
+  }
+]
